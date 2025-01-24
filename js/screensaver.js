@@ -8,10 +8,11 @@ var max = 0;
 
 const FPS = 30;
 const FRAME_INTERVAL = 1000 / FPS;
-let lastFrameTime = 0;
+let lastFrameTime = 0;  
 
 // Add at the top with other constants
-const QUALITY_DIVIDER = 1; // Divide resolution by 2 (half resolution)
+const QUALITY_DIVIDER = 1.6; // Divide resolution by 2 (half resolution)
+const RESOLUTION_LINES = 3; // Lower = smoother lines, worst performance
 
 function round(value) {
     return Math.round(value * 1000) / 1000;
@@ -38,8 +39,8 @@ class obj {
         //const length = 145;
         const divider = 500;
         
-        var length = 50 + (noise.perlin2(this.x * Math.sin(time + 12.4) / divider, this.y * Math.cos(time) / divider) * 100);
-        const angle = noise.perlin2(this.x * Math.sin(time) / divider, this.y * Math.sin(time + 40) / divider) * Math.PI * 2;
+        var length = 50 + (noise.perlin2(this.x * Math.sin(time + 10.4) / divider, this.y * Math.cos(time) / divider) * 100);
+        const angle = noise.perlin2(this.x * Math.sin(time) / divider, this.y * Math.sin(time + 32) / divider) * Math.PI * 2;
         
         let endx = this.x + Math.cos(angle) * length;
         let endy = this.y + Math.sin(angle) * length;
@@ -50,7 +51,7 @@ class obj {
         let dist = Math.max(0, Math.min(1, totalLength / 50)); // 200 is the threshold for turning black
 
         // The 2 that multiplies res. is the number of pixels per distance, more = smoother
-        const resolution = (1 / totalLength) * 2; 
+        const resolution = (1 / totalLength) * RESOLUTION_LINES; 
         let first = false;
         for (let i = 0; i < 1 || !first; i += resolution) {
             first = true;
