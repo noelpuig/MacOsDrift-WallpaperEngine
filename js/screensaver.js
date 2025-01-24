@@ -82,7 +82,8 @@ function createScene () {
     scene = [];
     for (let x = - 1 * aspectratio; x < 1 * aspectratio; x += separation) {
         for (let y = -1; y < 1; y += separation) {
-            scene.push(new node(x, y, 'circle', Math.random(), Math.random(), Math.random()));
+            let col = noise.perlin2(x, y);
+            scene.push(new node(x, y, 'circle', col, col, col));
         }
     }
 }
