@@ -8,14 +8,13 @@ const vertex_shader_code = `
 
     attribute vec2 vertex_position;
     attribute vec3 vertex_color;
-    attribute vec2 object_position;
     uniform float u_aspect_ratio;
 
     varying vec3 fragment_color;
     
     void main() {
         fragment_color = vertex_color;
-        vec2 position = vertex_position + object_position;
+        vec2 position = vertex_position;
         position.x = position.x * u_aspect_ratio;
         gl_Position = vec4(position, 0.0, 1.0);
     }
@@ -73,29 +72,57 @@ function createCircle (radius, segments, centerx, centery) {
     return [circle, segments * 3];
 }
 
-const separation = 0.1;
+const grid_separation = 0.1;
 const radius = 0.02;
 const length = 0.1;
-const circle_resolution = 12;
+const circle_resolution = 6;
+const circle_strand_amount = 5;
 
 function createScene () {
     scene = [];
-    for (let x = - 1 * aspectratio; x < 1 * aspectratio; x += separation) {
-        for (let y = -1; y < 1; y += separation) {
-            let col = noise.perlin2(x, y);
-            scene.push(new node(x, y, 'circle', col, col, col));
+    for (let x = - 1 * aspectratio; x < 1 * aspectratio; x += grid_separation) {
+        for (let y = -1; y < 1; y += grid_separation) {
+            let newnode = new Node(x, y, false, 'circle');
+            scene.push(newnode);
+            let children = newnode.createChildren();
+            children.forEach(child => {
+                scene.push(child);
+            });
         }
     }
 }
 
-class node {
-    constructor (x, y, type, r, g, b) {
+class Node {
+    constructor (x, y, is_child, type) {
         this.x = x;
         this.y = y;
-        this.r = r;
-        this.g = g;
-        this.b = b;
         this.type = type == 'circle' ? 0 : 1;
+        this.verts = 0;
+        this.children = [];
+        this.is_child = is_child;
+        this.layer = 0;
+    }
+
+    setLayer (layer) {this.layer = layer;}
+
+    getColor (time) {
+        let shade = 1 - this.layer/5;
+        
+        const speed = 10; // Higher -> lower speed
+        let col = noise.perlin2(this.x - time/speed, this.y + time/speed);
+        col *= shade;
+
+        return [ col, col, col ];
+    }
+
+    createChildren () {
+        const initial_offset = 0.015;
+        for (let i = 0; i < circle_strand_amount; i++) {
+            let new_node = new Node (this.x + i * initial_offset, this.y + i * initial_offset, true, 'circle'); 
+            new_node.setLayer(i);
+            this.children.push(new_node);
+        }
+        return this.children;
     }
 }
 
@@ -147,7 +174,7 @@ function startAnimation () {
     // Attach shaders to the program
     gl.attachShader(program, vertex_shader);
     gl.attachShader(program, fragment_shader);
-    
+
     // Link program to the context
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { // Check for errors
@@ -165,14 +192,21 @@ function startAnimation () {
     // VERTEX BUFFER
     //  --------------------------------------------------------
 
-
     // X, Y Vertex positions ; RBG color [0 - 1]
-    var [circle, amount_verts] = createCircle(radius, circle_resolution, 0, 0);
-    console.log(circle);
+    var vertex_positions = [];
+    var amount_verts = 0;
+    for (let i = 0; i < scene.length; i++) {
+        let [s_circle, s_amount_verts] = createCircle(radius, circle_resolution, scene[i].x, scene[i].y); 
+        s_circle.forEach(vertex_pos => {
+            vertex_positions.push(vertex_pos);
+        });
+        scene[i].verts = s_amount_verts;
+        amount_verts += s_amount_verts;
+    }
 
     var vertex_buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer); // Bind buffer to the context
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(circle), gl.STATIC_DRAW); // Fill buffer with data
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertex_positions), gl.STATIC_DRAW); // Fill buffer with data
 
     // After vertex buffer creation, add color buffer creation
     var color_buffer = gl.createBuffer();
@@ -188,6 +222,35 @@ function startAnimation () {
     );
     gl.enableVertexAttribArray(position_attribute_location); // Enable the attribute
 
+    const time = 0.001;
+    // Color buffer setup
+    gl.bindBuffer(gl.ARRAY_BUFFER, color_buffer);
+
+    var colors = new Float32Array(amount_verts * 3); // 3 components per color (RGB)
+    let colorIndex = 0;
+    for (let i = 0; i < scene.length; i++) { // For each node in scene
+        let currentNode = scene[i];
+        let [rn, gn, bn] = currentNode.getColor(time);
+        for (let j = 0; j < currentNode.verts; j++) { // For each vertex in node
+            colors[colorIndex++] = rn;
+            colors[colorIndex++] = gn;
+            colors[colorIndex++] = bn;
+        }
+    }
+        
+    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+
+    var color_attribute_location = gl.getAttribLocation(program, 'vertex_color');
+    gl.vertexAttribPointer(
+        color_attribute_location,
+        3,
+        gl.FLOAT,
+        gl.FALSE,
+        3 * Float32Array.BYTES_PER_ELEMENT, // 3 components per color
+        0
+    );
+    gl.enableVertexAttribArray(color_attribute_location);
+    
     //  --------------------------------------------------------
     // RENDER LOOP
     // --------------------------------------------------------
@@ -198,9 +261,7 @@ function startAnimation () {
     var aspectUniformLocation = gl.getUniformLocation(program, 'u_aspect_ratio');
     gl.uniform1f(aspectUniformLocation, 1.0 / aspectratio); // Inverse because we want to compress the x axis
 
-    
-    var position =  [0.5, 0.5]
-    object_positions = [];
+    /*
     var last_time = performance.now();
     function animation_loop () {
         var time = performance.now() / 1000;
@@ -209,67 +270,31 @@ function startAnimation () {
         gl.clearColor(0, 0, 0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        for (let i = 0; i < scene.length; i++) {
-            let node = scene[i];
+        // bind circle's vertex buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
 
-            // Create position buffer
-            var positionBuffer = gl.createBuffer();
-            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-            
-            // Fill buffer with position data
-            var positions = new Float32Array(amount_verts * 2); // 2 components per position
-            for (let i = 0; i < amount_verts * 2; i += 2) {
-                positions[i] = node.x;     // x
-                positions[i + 1] = node.y; // y
-            }
-            gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-
-            // Set up object position attribute
-            var object_position_location = gl.getAttribLocation(program, 'object_position');
-            gl.vertexAttribPointer(
-                object_position_location,
-                2,              // vec2
-                gl.FLOAT,
-                false,
-                0,
-                0 // no offset
-            );
-            gl.enableVertexAttribArray(object_position_location);
-
-            // Color buffer setup
-            gl.bindBuffer(gl.ARRAY_BUFFER, color_buffer);
-            var colors = new Float32Array(amount_verts * 3); // 3 components per color (RGB)
-            for (let j = 0; j < amount_verts * 3; j += 3) {
-                colors[j] = node.r;
-                colors[j + 1] = node.g;
-                colors[j + 2] = node.b;
-            }
-            gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
-
-            var color_attribute_location = gl.getAttribLocation(program, 'vertex_color');
-            gl.vertexAttribPointer(
-                color_attribute_location,
-                3,
-                gl.FLOAT,
-                gl.FALSE,
-                3 * Float32Array.BYTES_PER_ELEMENT, // 3 components per color
-                0
-            );
-            gl.enableVertexAttribArray(color_attribute_location);
-
-            // bind circle's vertex buffer
-            gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
-
-            // Redraw circle
-            gl.drawArrays(gl.TRIANGLES, 0, amount_verts);
-        }
+        // Redraw circle
+        gl.drawArrays(gl.TRIANGLES, 0, amount_verts);
         last_time = calcFps(last_time);
         
         // New frame req
         requestAnimationFrame(animation_loop);
     }
-    requestAnimationFrame(animation_loop);
+    requestAnimationFrame(animation_loop); */
 
+    var last_time = performance.now();
+    const loop = () => {
+    
+        last_time = calcFps(last_time);
+        // Draw background
+        gl.clearColor(0, 0, 0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        // Redraw circle
+        gl.drawArrays(gl.TRIANGLES, 0, amount_verts);
+        requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
 }
 
 function calcFps (last_time) {
