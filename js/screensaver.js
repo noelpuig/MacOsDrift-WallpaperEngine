@@ -7,30 +7,45 @@ const time_offset = Math.random() * 1000000000;
 const first_time = performance.now() + time_offset;
 
 const RESOLUTION_DIVIDER = 1;
-const grid_size = 17;
+const grid_size = 20; // 17
 const grid_separation = 1 / grid_size;
-const geometry_radius = 0.05;
+const geometry_radius = 0.1;
 const circle_radius = 0.002;
 const length = 0.1;
 const circle_resolution = 3;
 const circle_strand_amount = 30;
 const initial_offset = 0.005;
-const min_length = 0.5;
+const max_length = 0.4;
 const speed = 10; // Higher -> lower speed
 
+var running_animation_id = 0;
+
+const noise0 = new NoiseFactory();
+const noise1 = new NoiseFactory();
+const noise2 = new NoiseFactory();
+const noise3 = new NoiseFactory();
+
+// Initialize with different seeds
+noise0.seed(50);
+noise1.seed(150);
+noise2.seed(250);
+noise3.seed(350);
 
 const vertex_shader_code = `
     precision mediump float;
 
     attribute vec2 vertex_position;
     attribute vec4 vertex_color;
+    attribute vec2 v_center;
     uniform float u_aspect_ratio;
 
     varying vec4 fragment_color;
     varying vec2 frag_pos;
+    varying vec2 v_frag_center;
 
     void main() {
         fragment_color = vertex_color;
+        v_frag_center = v_center;
 
         // Keep frag_pos unscaled for correct circle shape
         frag_pos = vertex_position;
@@ -45,10 +60,11 @@ const fragment_shader_code = `
 
     varying vec4 fragment_color;
     varying vec2 frag_pos;
-    uniform vec2 u_center;
+
+    varying vec2 v_frag_center;
 
     void main() {
-        float dist = distance(frag_pos, u_center);
+        float dist = distance(frag_pos, v_frag_center);
 
         float circle_radius = 0.005;
         float smoothWidth = 0.001;
@@ -81,27 +97,43 @@ function resized () {
     aspectratio = canvas.width / canvas.height;
 }
 
-function createCircle (geometry_radius, segments, centerx, centery) {
-    var circle = [];
-    var step = (2 * Math.PI) / segments;
-    for (var i = 0; i < segments; i++) {
-        var angle = step * i;
-        circle.push(
-            centerx + geometry_radius * Math.cos(angle), 
-            centery + geometry_radius * Math.sin(angle));
-        circle.push(
-            centerx + geometry_radius * Math.cos(angle + step), 
-            centery + geometry_radius * Math.sin(angle + step));
-        circle.push(centerx, centery);
-    }
+function createGeometry (geometry_radius, segments, centerx, centery) {
+    /*
+    Square geometry:
+        +-------+
+        |\      |
+        | \     |
+        |  \    |
+        |   \   |
+        |    \  |
+        |     \ |
+        +------+ 
+    */
+    var geometry = [
+        // Triangle 1
+        centerx + geometry_radius,
+        centery + geometry_radius, // +, +
+        centerx - geometry_radius, 
+        centery + geometry_radius, // -, +
+        centerx + geometry_radius,
+        centery - geometry_radius, // +, -
+        // Triangle 2
+        centerx - geometry_radius,
+        centery + geometry_radius, // -, +
+        centerx - geometry_radius,
+        centery - geometry_radius, // -, -
+        centerx + geometry_radius,
+        centery - geometry_radius // +, -
+    ]
 
-    return [circle, segments * 3];
+    return [geometry, 6];
 }
 
 function createScene () {
     scene = [];
-    for (let x = - 1 * aspectratio; x < 1 * aspectratio; x += grid_separation) {
-        for (let y = -1; y < 1; y += grid_separation) {
+    const extra = grid_separation; // Space for extra nodes over the borders
+    for (let x = (- 1 - extra) * aspectratio; x < (1 + extra) * aspectratio; x += grid_separation) {
+        for (let y = -1 - extra; y < 1 + extra; y += grid_separation) {
             let newnode = new Node(x, y, false, 'circle');
             scene.push(newnode);
             let children = newnode.createChildren();
@@ -112,27 +144,23 @@ function createScene () {
     }
 }
 
-function moveCircles(vertex_positions, segments, scene) {
+function moveGeometry(vertex_positions, scene) {
     let vertexIndex = 0;
     for (let j = 0; j < scene.length; j++) {
-        let node = scene[j];
-        
-        var step = (2 * Math.PI) / segments;
-        for (var i = 0; i < segments; i++) {
-            var angle = step * i;
-            
-            // First vertex of triangle
-            vertex_positions[vertexIndex++] = node.x + geometry_radius * Math.cos(angle); // x
-            vertex_positions[vertexIndex++] = node.y + geometry_radius * Math.sin(angle); // y
-            
-            // Second vertex of triangle
-            vertex_positions[vertexIndex++] = node.x + geometry_radius * Math.cos(angle + step); // x
-            vertex_positions[vertexIndex++] = node.y + geometry_radius * Math.sin(angle + step); // y
-            
-            // Center of circle
-            vertex_positions[vertexIndex++] = node.x; // x
-            vertex_positions[vertexIndex++] = node.y; // y
-        }
+        // Triangle 1
+        vertex_positions[vertexIndex++] = scene[j].x + geometry_radius;
+        vertex_positions[vertexIndex++] = scene[j].y + geometry_radius; // +, +
+        vertex_positions[vertexIndex++] = scene[j].x - geometry_radius; 
+        vertex_positions[vertexIndex++] = scene[j].y + geometry_radius; // -, +
+        vertex_positions[vertexIndex++] = scene[j].x + geometry_radius;
+        vertex_positions[vertexIndex++] = scene[j].y - geometry_radius; // +, -
+        // Triangle 2
+        vertex_positions[vertexIndex++] = scene[j].x - geometry_radius;
+        vertex_positions[vertexIndex++] = scene[j].y + geometry_radius; // -, +
+        vertex_positions[vertexIndex++] = scene[j].x - geometry_radius;
+        vertex_positions[vertexIndex++] = scene[j].y - geometry_radius; // -, -
+        vertex_positions[vertexIndex++] = scene[j].x + geometry_radius;
+        vertex_positions[vertexIndex++] = scene[j].y - geometry_radius; // +, -
     }
 }
 
@@ -151,7 +179,6 @@ class Node {
         this.is_child = is_child;
         this.layer = 0;
         this.angle_offset = 0;
-
         this.strandlength = 0;
         this.strandAngle = 0;
     }
@@ -193,13 +220,10 @@ class Node {
         if (this.is_child) return;
 
         let posdivider = 1.6;
-
-        noise.seed(50);
-        let angle = noise.perlin2(this.x/posdivider + time/speed, this.y/posdivider + time/speed) * 2 * Math.PI;
-        noise.seed(150);
-        let length = 0.01 + (min_length * noise.perlin2((this.x/posdivider + time/speed)/4, (this.y/posdivider + time/speed)/4));
-        noise.seed(100);
-        this.angle_offset += 0.001 * noise.perlin2(this.x/posdivider + time/30, this.y/posdivider + time/30);
+        // Use different noise instances instead of reseeding
+        let angle = noise0.perlin2(this.x/posdivider + time/speed, this.y/posdivider + time/speed) * 2 * Math.PI;
+        let length = 0.01 + (max_length * noise1.perlin2((this.x/posdivider + time/speed)/4, (this.y/posdivider + time/speed)/4));
+        this.angle_offset += 0.001 * noise2.perlin2(this.x/posdivider + time/30, this.y/posdivider + time/30);
 
         let endx = this.x + (Math.sin(angle + this.angle_offset) * length);
         let endy = this.y + (Math.cos(angle + this.angle_offset) * length);
@@ -277,7 +301,9 @@ function startAnimation () {
 
     // Link program to the context
     gl.linkProgram(program);
-    /* DEBUGGING
+
+    // DEBUGGING
+    /*
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { // Check for errors
         console.error('Program linking error: ' + gl.getProgramInfoLog(program));
         return;
@@ -307,20 +333,25 @@ function startAnimation () {
     // Keep a running start index
     for (let i = 0; i < scene.length; i++) {
         scene[i].vertStart = amount_verts; // New: track start index
-        let [s_circle, s_amount_verts] = createCircle(geometry_radius, circle_resolution, scene[i].x, scene[i].y);
+        let [s_circle, s_amount_verts] = createGeometry(geometry_radius, circle_resolution, scene[i].x, scene[i].y);
         vertex_positions.push(...s_circle);
         scene[i].verts = s_amount_verts;
         amount_verts += s_amount_verts;
     }
 
     var last_time = performance.now() + time_offset;
-
-    // Get uniform locations once
-    const centerUniformLocation = gl.getUniformLocation(program, 'u_center');
     
-    const loop = () => {
+    var center_positions = [];
+    for (let i = 0; i < scene.length; i++) {
+        for (let j = 0; j < 6; j++) center_positions.push(scene[i].x, scene[i].y);
+    }
 
-        var time = (performance.now() + time_offset) / 1000;
+    running_animation_id++;
+    let animation_id = running_animation_id;
+    const loop = () => {
+        if (animation_id != running_animation_id) return; // Stop multiple animations from running at the same time
+        let real_time = performance.now();
+        var time = (real_time + time_offset) / 1000;
 
         scene.forEach(node => {
             if (node.is_child) return;
@@ -328,7 +359,7 @@ function startAnimation () {
         });
     
         // X, Y Vertex positions
-        moveCircles(vertex_positions, circle_resolution, scene); 
+        moveGeometry(vertex_positions, scene); 
 
         //  --------------------------------------------------------
         // VERTEX BUFFER
@@ -348,6 +379,30 @@ function startAnimation () {
         );
         gl.enableVertexAttribArray(position_attribute_location); // Enable the attribute
 
+        for (let i = 0; i < scene.length; i++) {
+            const baseIndex = i * (6 * 2); // 6 vertices, each needs 2 floats
+            for (let j = 0; j < 6; j++) {
+                center_positions[baseIndex + j * 2]     = scene[i].x;
+                center_positions[baseIndex + j * 2 + 1] = scene[i].y;
+            }
+        }
+
+        // Center buffer
+        var v_center_buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, v_center_buffer); // Bind buffer to the context
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(center_positions), gl.STATIC_DRAW); // Fill buffer with data
+        var center_attribute_location = gl.getAttribLocation(program, 'v_center');
+
+        gl.vertexAttribPointer(
+            center_attribute_location, // Attribute location
+            2, // Number of elements per vertex (vec2 = 2)
+            gl.FLOAT, // Type of elements, 32 bit float
+            gl.FALSE, // Normalized data
+            2 * Float32Array.BYTES_PER_ELEMENT, // Only position data, no interleaving
+            0 // Offset from the beginning of a single vertex to this attribute, no offset in this case
+        );
+        gl.enableVertexAttribArray(center_attribute_location); // Enable the attribute
+
         // Color buffer setup
         var color_buffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, color_buffer);
@@ -355,7 +410,7 @@ function startAnimation () {
         let colorIndex = 0;
         for (let i = 0; i < scene.length; i++) {
             let currentNode = scene[i];
-            const [r, g, b, a] = currentNode.getColor(performance.now() + time_offset);
+            const [r, g, b, a] = currentNode.getColor(real_time + time_offset);
             // Fill colors for all vertices of this node
             for (let j = 0; j < currentNode.verts; j++) {
                 colors[colorIndex++] = r;
@@ -392,13 +447,9 @@ function startAnimation () {
         gl.clearColor(0, 0, 0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        // Update uniforms before drawing each node
-        scene.forEach(node => {
-            gl.uniform2f(centerUniformLocation, node.x, node.y);
-            // Draw just this node's vertices
-            gl.drawArrays(gl.TRIANGLES, node.vertStart, node.verts);
-        });
-
+        // Draw just this node's vertices
+        gl.drawArrays(gl.TRIANGLES, 0, amount_verts);
+        
         requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
