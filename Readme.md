@@ -6,4 +6,4 @@
 
 ### WebGL current progress:
 
-![Screenshot of how the wallpaper looks](https://i.ibb.co/ZGs4TVQ/image.png)
+![screenshot_current](https://github.com/user-attachments/assets/5d3cfe81-7fb2-4e41-a20d-26883061bcb4)
