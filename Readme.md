@@ -6,5 +6,4 @@
 
 ### WebGL current progress:
 
-![Screenshot of how the wallpaper looks](https://i.ibb.co/gzYZtF4/image.png)
-(Not yet animated)
+![Screenshot of how the wallpaper looks](https://i.ibb.co/ZGs4TVQ/image.png)
