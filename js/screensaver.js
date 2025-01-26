@@ -3,45 +3,62 @@ var gl;
 
 var aspectratio = 1; 
 var scene = [];
-const first_time = performance.now();
+const time_offset = Math.random() * 1000000000;
+const first_time = performance.now() + time_offset;
 
 const RESOLUTION_DIVIDER = 1;
-const grid_separation = 0.1;
-const radius = 0.01;
+const grid_size = 17;
+const grid_separation = 1 / grid_size;
+const geometry_radius = 0.05;
+const circle_radius = 0.002;
 const length = 0.1;
-const circle_resolution = 8;
-const circle_strand_amount = 25;
+const circle_resolution = 3;
+const circle_strand_amount = 30;
 const initial_offset = 0.005;
-const min_length = 0.35;
+const min_length = 0.5;
 const speed = 10; // Higher -> lower speed
+
 
 const vertex_shader_code = `
     precision mediump float;
 
     attribute vec2 vertex_position;
-    attribute vec3 vertex_color;
+    attribute vec4 vertex_color;
     uniform float u_aspect_ratio;
 
-    varying vec3 fragment_color;
-    
+    varying vec4 fragment_color;
+    varying vec2 frag_pos;
+
     void main() {
         fragment_color = vertex_color;
-        vec2 position = vertex_position;
-        position.x = position.x * u_aspect_ratio;
-        gl_Position = vec4(position, 0.0, 1.0);
+
+        // Keep frag_pos unscaled for correct circle shape
+        frag_pos = vertex_position;
+
+        // Only scale x for on-screen positioning
+        gl_Position = vec4(vertex_position.x * u_aspect_ratio, vertex_position.y, 0.0, 1.0);
     }
 `;
 
 const fragment_shader_code = `
     precision mediump float;
-    
-    varying vec3 fragment_color;
-    
-    void main() {
-        gl_FragColor = vec4(fragment_color, 1.0);
 
+    varying vec4 fragment_color;
+    varying vec2 frag_pos;
+    uniform vec2 u_center;
+
+    void main() {
+        float dist = distance(frag_pos, u_center);
+
+        float circle_radius = 0.005;
+        float smoothWidth = 0.001;
+        float alpha = 1.0 - smoothstep(circle_radius - smoothWidth, circle_radius, dist);
+
+        if (alpha < 0.05) discard;
+
+        gl_FragColor = fragment_color;
     }
-`
+`;
 
 function setError (message) {
     document.getElementById('error').innerText = message;
@@ -64,17 +81,17 @@ function resized () {
     aspectratio = canvas.width / canvas.height;
 }
 
-function createCircle (radius, segments, centerx, centery) {
+function createCircle (geometry_radius, segments, centerx, centery) {
     var circle = [];
     var step = (2 * Math.PI) / segments;
     for (var i = 0; i < segments; i++) {
         var angle = step * i;
         circle.push(
-            centerx + radius * Math.cos(angle), 
-            centery + radius * Math.sin(angle));
+            centerx + geometry_radius * Math.cos(angle), 
+            centery + geometry_radius * Math.sin(angle));
         circle.push(
-            centerx + radius * Math.cos(angle + step), 
-            centery + radius * Math.sin(angle + step));
+            centerx + geometry_radius * Math.cos(angle + step), 
+            centery + geometry_radius * Math.sin(angle + step));
         circle.push(centerx, centery);
     }
 
@@ -95,6 +112,30 @@ function createScene () {
     }
 }
 
+function moveCircles(vertex_positions, segments, scene) {
+    let vertexIndex = 0;
+    for (let j = 0; j < scene.length; j++) {
+        let node = scene[j];
+        
+        var step = (2 * Math.PI) / segments;
+        for (var i = 0; i < segments; i++) {
+            var angle = step * i;
+            
+            // First vertex of triangle
+            vertex_positions[vertexIndex++] = node.x + geometry_radius * Math.cos(angle); // x
+            vertex_positions[vertexIndex++] = node.y + geometry_radius * Math.sin(angle); // y
+            
+            // Second vertex of triangle
+            vertex_positions[vertexIndex++] = node.x + geometry_radius * Math.cos(angle + step); // x
+            vertex_positions[vertexIndex++] = node.y + geometry_radius * Math.sin(angle + step); // y
+            
+            // Center of circle
+            vertex_positions[vertexIndex++] = node.x; // x
+            vertex_positions[vertexIndex++] = node.y; // y
+        }
+    }
+}
+
 const diff = (a, b, threshold) => {
     let distance = Math.abs(a - b);
     return Math.max(0, Math.min(1, 1 - (distance / threshold)));
@@ -109,6 +150,7 @@ class Node {
         this.children = [];
         this.is_child = is_child;
         this.layer = 0;
+        this.angle_offset = 0;
 
         this.strandlength = 0;
         this.strandAngle = 0;
@@ -119,18 +161,22 @@ class Node {
     getColor (time) {
         let shade = this.layer/circle_strand_amount;
         
-        const hue_shift = 0.2; // Rotating hue over time
-        
-
         let time_start = Math.min(1, Math.abs(time - first_time) / 2000);
         let col_per_length = Math.max(0, Math.min(1, this.strandlength * 3));
-        let col = shade * col_per_length * time_start; // time_start will go from 0 to 1 over 2 seconds
+        let alpha = shade * col_per_length * time_start;
+        alpha = Math.max(0, Math.min(1, alpha * 2.5));
 
-        let r = col * diff(this.strandAngle, 0, Math.PI / 2);
-        let b = col * (1 - Math.max(0, Math.min(1, this.strandlength * 3)));
-        let g = col * diff(this.strandAngle, Math.PI, Math.PI / 2);
+        let r = alpha * diff(this.strandAngle, 0, Math.PI / 2);
+        let b = alpha * (1 - Math.max(0, Math.min(1, this.strandlength * 3)));
+        let g = alpha * diff(this.strandAngle, Math.PI, Math.PI / 2);
 
-        return [r, g, b];
+        const desat = 0.95;
+        
+        r = Math.max(0, r * desat);
+        g = Math.max(0, g * desat);
+        b = Math.max(0, b * desat);
+
+        return [r, g * 1.1, b * 1.1, alpha];
     }
 
     createChildren () {
@@ -146,23 +192,27 @@ class Node {
     updatePositions (time) {
         if (this.is_child) return;
 
+        let posdivider = 1.6;
+
         noise.seed(50);
-        let angle = noise.perlin2(this.x + time/speed, this.y + time/speed) * 2 * Math.PI;
+        let angle = noise.perlin2(this.x/posdivider + time/speed, this.y/posdivider + time/speed) * 2 * Math.PI;
         noise.seed(150);
-        let length = Math.abs(0.01 + (min_length * noise.perlin2((this.x + time/speed)/4, (this.y + time/speed)/4)));
-        
-        let endx = this.x + (Math.sin(angle) * length);
-        let endy = this.y + (Math.cos(angle) * length);
+        let length = 0.01 + (min_length * noise.perlin2((this.x/posdivider + time/speed)/4, (this.y/posdivider + time/speed)/4));
+        noise.seed(100);
+        this.angle_offset += 0.001 * noise.perlin2(this.x/posdivider + time/30, this.y/posdivider + time/30);
+
+        let endx = this.x + (Math.sin(angle + this.angle_offset) * length);
+        let endy = this.y + (Math.cos(angle + this.angle_offset) * length);
         
         let vector = [(endx - this.x) / circle_strand_amount, (endy - this.y) / circle_strand_amount];
         for (let i = 1; i <= circle_strand_amount; i++) {
             this.children[i - 1].x = this.x + vector[0] * i;
             this.children[i - 1].y = this.y + vector[1] * i;
-            this.children[i - 1].strandlength = length; 
+            this.children[i - 1].strandlength = Math.abs(length); 
             this.children[i - 1].strandAngle = angle; 
         }
 
-        this.strandlength = length;
+        this.strandlength = Math.abs(length);
         this.strandAngle = angle;
     }
 }
@@ -171,11 +221,20 @@ function startAnimation () {
     console.log('Starting animation...');
 
     canvas = document.getElementById('canvas');
-    gl = canvas.getContext('webgl');
+    
+    // Disable alpha, antialias, preserveDrawingBuffer, desynchronized -> performance
+    const contextAttributes = {
+        alpha: false,
+        antialias: false,
+        preserveDrawingBuffer: false,
+        desynchronized: false
+    };
+    
+    gl = canvas.getContext('webgl', contextAttributes);
 
     // Old browser webgl check
     if (!gl) {
-        gl = canvas.getContext('experimental-webgl');
+        gl = canvas.getContext('experimental-webgl', contextAttributes);
     }
 
     if (!gl) {
@@ -218,6 +277,7 @@ function startAnimation () {
 
     // Link program to the context
     gl.linkProgram(program);
+    /* DEBUGGING
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { // Check for errors
         console.error('Program linking error: ' + gl.getProgramInfoLog(program));
         return;
@@ -228,41 +288,55 @@ function startAnimation () {
         console.error('Program validation error: ' + gl.getProgramInfoLog(program));
         return;
     }
+    */
 
-    var last_time = performance.now();
+    // Enable alpha blending
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    // Get the vertex ID extension
+    const ext = gl.getExtension('OES_vertex_array_object');
+    if (!ext) {
+        console.warn('OES_vertex_array_object not supported');
+    }
+
+    // X, Y Vertex positions create circles
+    var vertex_positions = [];
+    var amount_verts = 0;
+
+    // Keep a running start index
+    for (let i = 0; i < scene.length; i++) {
+        scene[i].vertStart = amount_verts; // New: track start index
+        let [s_circle, s_amount_verts] = createCircle(geometry_radius, circle_resolution, scene[i].x, scene[i].y);
+        vertex_positions.push(...s_circle);
+        scene[i].verts = s_amount_verts;
+        amount_verts += s_amount_verts;
+    }
+
+    var last_time = performance.now() + time_offset;
+
+    // Get uniform locations once
+    const centerUniformLocation = gl.getUniformLocation(program, 'u_center');
+    
     const loop = () => {
 
-        var time = performance.now() / 1000;
+        var time = (performance.now() + time_offset) / 1000;
 
         scene.forEach(node => {
             if (node.is_child) return;
             node.updatePositions(time);
         });
     
+        // X, Y Vertex positions
+        moveCircles(vertex_positions, circle_resolution, scene); 
 
         //  --------------------------------------------------------
         // VERTEX BUFFER
         //  --------------------------------------------------------
 
-        // X, Y Vertex positions ; RBG color [0 - 1]
-        var vertex_positions = [];
-        var amount_verts = 0;
-        for (let i = 0; i < scene.length; i++) {
-            let [s_circle, s_amount_verts] = createCircle(radius, circle_resolution, scene[i].x, scene[i].y); 
-            s_circle.forEach(vertex_pos => {
-                vertex_positions.push(vertex_pos);
-            });
-            scene[i].verts = s_amount_verts;
-            amount_verts += s_amount_verts;
-        }
-
         var vertex_buffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer); // Bind buffer to the context
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertex_positions), gl.STATIC_DRAW); // Fill buffer with data
-
-        // After vertex buffer creation, add color buffer creation
-        var color_buffer = gl.createBuffer();
-
         var position_attribute_location = gl.getAttribLocation(program, 'vertex_position'); // Gets location of the vertex_position attribute in the shader
         gl.vertexAttribPointer(
             position_attribute_location, // Attribute location
@@ -275,29 +349,30 @@ function startAnimation () {
         gl.enableVertexAttribArray(position_attribute_location); // Enable the attribute
 
         // Color buffer setup
+        var color_buffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, color_buffer);
-
-        var colors = new Float32Array(amount_verts * 3); // 3 components per color (RGB)
+        var colors = new Float32Array(amount_verts * 4); // 4 components per color (RGBA)
         let colorIndex = 0;
-        for (let i = 0; i < scene.length; i++) { // For each node in scene
+        for (let i = 0; i < scene.length; i++) {
             let currentNode = scene[i];
-            let [rn, gn, bn] = currentNode.getColor(performance.now());
-            for (let j = 0; j < currentNode.verts; j++) { // For each vertex in node
-                colors[colorIndex++] = rn;
-                colors[colorIndex++] = gn;
-                colors[colorIndex++] = bn;
+            const [r, g, b, a] = currentNode.getColor(performance.now() + time_offset);
+            // Fill colors for all vertices of this node
+            for (let j = 0; j < currentNode.verts; j++) {
+                colors[colorIndex++] = r;
+                colors[colorIndex++] = g;
+                colors[colorIndex++] = b;
+                colors[colorIndex++] = a;
             }
         }
-            
         gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 
         var color_attribute_location = gl.getAttribLocation(program, 'vertex_color');
         gl.vertexAttribPointer(
             color_attribute_location,
-            3,
+            4,                          // vec4 (RGBA)
             gl.FLOAT,
-            gl.FALSE,
-            3 * Float32Array.BYTES_PER_ELEMENT, // 3 components per color
+            false,
+            0,                         // Tightly packed
             0
         );
         gl.enableVertexAttribArray(color_attribute_location);
@@ -312,42 +387,26 @@ function startAnimation () {
         var aspectUniformLocation = gl.getUniformLocation(program, 'u_aspect_ratio');
         gl.uniform1f(aspectUniformLocation, 1.0 / aspectratio); // Inverse because we want to compress the x axis
 
-        /*
-        var last_time = performance.now();
-        function animation_loop () {
-            var time = performance.now() / 1000;
-
-            // Draw background
-            gl.clearColor(0, 0, 0, 1.0);
-            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-            // bind circle's vertex buffer
-            gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
-
-            // Redraw circle
-            gl.drawArrays(gl.TRIANGLES, 0, amount_verts);
-            last_time = calcFps(last_time);
-            
-            // New frame req
-            requestAnimationFrame(animation_loop);
-        }
-        requestAnimationFrame(animation_loop); */
-
         last_time = calcFps(last_time);
         // Draw background
         gl.clearColor(0, 0, 0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        // Redraw circle
-        gl.drawArrays(gl.TRIANGLES, 0, amount_verts);
+        // Update uniforms before drawing each node
+        scene.forEach(node => {
+            gl.uniform2f(centerUniformLocation, node.x, node.y);
+            // Draw just this node's vertices
+            gl.drawArrays(gl.TRIANGLES, node.vertStart, node.verts);
+        });
+
         requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
 }
 
 function calcFps (last_time) {
-    var fps = 1000 / (performance.now() - last_time);
-    last_time = performance.now();
+    var fps = 1000 / ((performance.now() + time_offset) - last_time);
+    last_time = performance.now() + time_offset;
     document.getElementById('fps-counter').innerText = 'FPS: ' + fps.toFixed(2);
     return last_time;
 }
@@ -359,6 +418,7 @@ function debounce(func, wait) { // Wait in miliseconds before executing
             clearTimeout(timeout);
             func(...args);
         };
+
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };

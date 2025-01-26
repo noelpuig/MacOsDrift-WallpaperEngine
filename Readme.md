@@ -6,4 +6,4 @@
 
 ### Screenshots:
 
-![screenshot of the current state](https://github.com/user-attachments/assets/a06b4a70-9aa8-4996-b667-5989566daef0)
+![screenshot_current](https://github.com/user-attachments/assets/5d3cfe81-7fb2-4e41-a20d-26883061bcb4)
