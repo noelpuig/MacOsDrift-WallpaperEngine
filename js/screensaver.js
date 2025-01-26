@@ -10,7 +10,7 @@ const grid_separation = 0.1;
 const radius = 0.01;
 const length = 0.1;
 const circle_resolution = 8;
-const circle_strand_amount = 25;
+const circle_strand_amount = 20;
 const initial_offset = 0.005;
 const min_length = 0.35;
 const speed = 10; // Higher -> lower speed
@@ -193,16 +193,31 @@ function startAnimation () {
     console.log('Starting animation...');
 
     canvas = document.getElementById('canvas');
-    gl = canvas.getContext('webgl');
+    
+    // Disable alpha, antialias, preserveDrawingBuffer, desynchronized -> performance
+    const contextAttributes = {
+        alpha: false,
+        antialias: false,
+        preserveDrawingBuffer: false,
+        desynchronized: false
+    };
+    
+    gl = canvas.getContext('webgl', contextAttributes);
 
     // Old browser webgl check
     if (!gl) {
-        gl = canvas.getContext('experimental-webgl');
+        gl = canvas.getContext('experimental-webgl', contextAttributes);
     }
 
     if (!gl) {
         setError('WebGL not supported');
         return;
+    }
+
+    // Disable VSYNC
+    const ext = gl.getExtension('EXT_disjoint_timer_query');
+    if (ext) {
+        console.log('High performance mode enabled');
     }
 
     // Change canvas resoltion
