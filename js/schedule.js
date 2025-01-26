@@ -51,9 +51,17 @@ function getNextClass() {
 }
 
 function updateScheduleDisplay() {
-    const scheduleElement = document.querySelector('l.schedule#schedule');
-    if (scheduleElement) {
-        scheduleElement.innerHTML = getNextClass();
+    // Get schedule element
+    const scheduleElement = document.getElementById('schedule');
+
+    // Check if schedule exists and is enabled
+    if (typeof schedule === 'undefined' || typeof show_schedule === 'undefined' || !show_schedule) {
+        scheduleElement.style.display = 'none';
+    } else {
+        const scheduleElement = document.querySelector('l.schedule#schedule');
+        if (scheduleElement) {
+            scheduleElement.innerHTML = getNextClass();
+        }
     }
 }
 
