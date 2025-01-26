@@ -95,6 +95,30 @@ function createScene () {
     }
 }
 
+function moveCircles(vertex_positions, segments, scene) {
+    let vertexIndex = 0;
+    for (let j = 0; j < scene.length; j++) {
+        let node = scene[j];
+        
+        var step = (2 * Math.PI) / segments;
+        for (var i = 0; i < segments; i++) {
+            var angle = step * i;
+            
+            // First vertex of triangle
+            vertex_positions[vertexIndex++] = node.x + radius * Math.cos(angle); // x
+            vertex_positions[vertexIndex++] = node.y + radius * Math.sin(angle); // y
+            
+            // Second vertex of triangle
+            vertex_positions[vertexIndex++] = node.x + radius * Math.cos(angle + step); // x
+            vertex_positions[vertexIndex++] = node.y + radius * Math.sin(angle + step); // y
+            
+            // Center of circle
+            vertex_positions[vertexIndex++] = node.x; // x
+            vertex_positions[vertexIndex++] = node.y; // y
+        }
+    }
+}
+
 const diff = (a, b, threshold) => {
     let distance = Math.abs(a - b);
     return Math.max(0, Math.min(1, 1 - (distance / threshold)));
@@ -119,17 +143,15 @@ class Node {
     getColor (time) {
         let shade = this.layer/circle_strand_amount;
         
-        const hue_shift = 0.2; // Rotating hue over time
-        
-
         let time_start = Math.min(1, Math.abs(time - first_time) / 2000);
         let col_per_length = Math.max(0, Math.min(1, this.strandlength * 3));
-        let col = shade * col_per_length * time_start; // time_start will go from 0 to 1 over 2 seconds
+        let col = shade * col_per_length * time_start;
 
         let r = col * diff(this.strandAngle, 0, Math.PI / 2);
         let b = col * (1 - Math.max(0, Math.min(1, this.strandlength * 3)));
         let g = col * diff(this.strandAngle, Math.PI, Math.PI / 2);
 
+        const hue_shift = 0.2;
         return [r, g, b];
     }
 
@@ -229,6 +251,16 @@ function startAnimation () {
         return;
     }
 
+    // X, Y Vertex positions create circles
+    var vertex_positions = [];
+    var amount_verts = 0;
+    for (let i = 0; i < scene.length; i++) {
+        let [s_circle, s_amount_verts] = createCircle(radius, circle_resolution, scene[i].x, scene[i].y); 
+        vertex_positions.push(...s_circle)
+        scene[i].verts = s_amount_verts;
+        amount_verts += s_amount_verts;
+    }
+
     var last_time = performance.now();
     const loop = () => {
 
@@ -239,30 +271,16 @@ function startAnimation () {
             node.updatePositions(time);
         });
     
+        // X, Y Vertex positions
+        moveCircles(vertex_positions, circle_resolution, scene); 
 
         //  --------------------------------------------------------
         // VERTEX BUFFER
         //  --------------------------------------------------------
 
-        // X, Y Vertex positions ; RBG color [0 - 1]
-        var vertex_positions = [];
-        var amount_verts = 0;
-        for (let i = 0; i < scene.length; i++) {
-            let [s_circle, s_amount_verts] = createCircle(radius, circle_resolution, scene[i].x, scene[i].y); 
-            s_circle.forEach(vertex_pos => {
-                vertex_positions.push(vertex_pos);
-            });
-            scene[i].verts = s_amount_verts;
-            amount_verts += s_amount_verts;
-        }
-
         var vertex_buffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer); // Bind buffer to the context
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertex_positions), gl.STATIC_DRAW); // Fill buffer with data
-
-        // After vertex buffer creation, add color buffer creation
-        var color_buffer = gl.createBuffer();
-
         var position_attribute_location = gl.getAttribLocation(program, 'vertex_position'); // Gets location of the vertex_position attribute in the shader
         gl.vertexAttribPointer(
             position_attribute_location, // Attribute location
@@ -275,8 +293,8 @@ function startAnimation () {
         gl.enableVertexAttribArray(position_attribute_location); // Enable the attribute
 
         // Color buffer setup
+        var color_buffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, color_buffer);
-
         var colors = new Float32Array(amount_verts * 3); // 3 components per color (RGB)
         let colorIndex = 0;
         for (let i = 0; i < scene.length; i++) { // For each node in scene
@@ -288,7 +306,6 @@ function startAnimation () {
                 colors[colorIndex++] = bn;
             }
         }
-            
         gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 
         var color_attribute_location = gl.getAttribLocation(program, 'vertex_color');
@@ -311,27 +328,6 @@ function startAnimation () {
         // Set aspect ratio in shader
         var aspectUniformLocation = gl.getUniformLocation(program, 'u_aspect_ratio');
         gl.uniform1f(aspectUniformLocation, 1.0 / aspectratio); // Inverse because we want to compress the x axis
-
-        /*
-        var last_time = performance.now();
-        function animation_loop () {
-            var time = performance.now() / 1000;
-
-            // Draw background
-            gl.clearColor(0, 0, 0, 1.0);
-            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-            // bind circle's vertex buffer
-            gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
-
-            // Redraw circle
-            gl.drawArrays(gl.TRIANGLES, 0, amount_verts);
-            last_time = calcFps(last_time);
-            
-            // New frame req
-            requestAnimationFrame(animation_loop);
-        }
-        requestAnimationFrame(animation_loop); */
 
         last_time = calcFps(last_time);
         // Draw background
@@ -359,6 +355,7 @@ function debounce(func, wait) { // Wait in miliseconds before executing
             clearTimeout(timeout);
             func(...args);
         };
+
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
