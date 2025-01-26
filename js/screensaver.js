@@ -7,7 +7,7 @@ const time_offset = Math.random() * 1000000000;
 const first_time = performance.now() + time_offset;
 
 const RESOLUTION_DIVIDER = 1;
-const grid_size = 20; // 17
+const grid_size = 20;
 const grid_separation = 1 / grid_size;
 const geometry_radius = 0.1;
 const circle_radius = 0.002;
